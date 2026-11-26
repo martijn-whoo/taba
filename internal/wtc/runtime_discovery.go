@@ -9,8 +9,8 @@ import (
 
 // runtimeWithDeclarations adds tasks that have not been rendered yet. Observed
 // items win: declarations cannot replace a live URL, failure, resource state or
-// tunnel choice, and only fill a missing Declaration. This path never plans or
-// applies a runtime.
+// tunnel choice, and only fill a missing Declaration or Tags. This path never
+// plans or applies a runtime.
 func (c *Context) runtimeWithDeclarations(observed []RuntimeItem) []RuntimeItem {
 	seen := make(map[string]bool, len(observed))
 	for _, item := range observed {
@@ -25,15 +25,22 @@ func (c *Context) runtimeWithDeclarations(observed []RuntimeItem) []RuntimeItem 
 		if !seen[item.Path] {
 			observed = append(observed, item)
 			seen[item.Path] = true
-		} else if item.Declaration != nil {
+		} else {
 			files[item.Path] = item
 		}
 	}
-	// A task rendered before declarations were recorded keeps every observed
-	// fact and gains only the declaring file, when it still names that file.
+	// A task rendered before declarations or tags were recorded keeps every
+	// observed fact and gains only those, when its file still declares it.
 	for i := range observed {
-		if file, ok := files[observed[i].Path]; ok && observed[i].Declaration == nil && !observed[i].ManagedTunnel && observed[i].Source != "" && observed[i].Source == file.Source {
+		file, ok := files[observed[i].Path]
+		if !ok || observed[i].ManagedTunnel || observed[i].Source == "" || observed[i].Source != file.Source {
+			continue
+		}
+		if observed[i].Declaration == nil {
 			observed[i].Declaration = file.Declaration
+		}
+		if observed[i].Tags == nil {
+			observed[i].Tags = file.Tags
 		}
 	}
 	return c.recordedTunnelItems(observed)
@@ -115,12 +122,8 @@ func (c *Context) runtimeRepoDeclarationsInputs(repo runtimeRepo) ([]RuntimeItem
 		}
 		item.Label, _ = task["label"].(string)
 		item.Autostart, _ = task["autostart"].(bool)
-		if tags, ok := task["tags"].([]any); ok {
-			for _, tag := range tags {
-				if tag == "endpoint" || tag == "accessory" {
-					item.Kind = tag.(string)
-				}
-			}
+		if err := runtimeTags(&item, task); err != nil {
+			return nil, sources.inputs, err
 		}
 		if value, exists := task["x-wtc"]; exists {
 			meta, ok := value.(map[string]any)
@@ -151,4 +154,25 @@ func (c *Context) runtimeRepoDeclarationsInputs(repo runtimeRepo) ([]RuntimeItem
 		items = append(items, item)
 	}
 	return items, sources.inputs, nil
+}
+
+func runtimeTags(item *RuntimeItem, task map[string]any) error {
+	if task["tags"] == nil {
+		return nil
+	}
+	tags, ok := task["tags"].([]any)
+	if !ok {
+		return fmt.Errorf("%s: tags must be a list of strings", item.Path)
+	}
+	for _, value := range tags {
+		tag, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("%s: tags must be a list of strings", item.Path)
+		}
+		if tag == "endpoint" || tag == "accessory" {
+			item.Kind = tag
+		}
+		item.Tags = append(item.Tags, tag)
+	}
+	return nil
 }
