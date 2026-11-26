@@ -242,11 +242,19 @@ func run() error {
 			return err
 		}
 		checks := []map[string]any{{"name": "registry", "ok": len(c.Registry.Repos) > 0, "detail": fmt.Sprintf("%d repositories", len(c.Registry.Repos))}}
-		for _, name := range []string{"git", "mise", "herdr"} {
+		kind, err := openMultiplexer(c)
+		if err != nil {
+			checks = append(checks, map[string]any{"name": "multiplexer", "ok": false, "detail": err.Error()})
+		}
+		multiplexer := newTerminalHost(kind, "")
+		for _, name := range []string{"git", "mise", multiplexer.Kind()} {
 			path, err := exec.LookPath(name)
+			if name == "rex" {
+				path, err = rexCommand()
+			}
 			checks = append(checks, map[string]any{"name": name, "ok": err == nil, "detail": path})
 		}
-		if budget, low := openPtyReport(newTerminalHost("", "")); budget != "" {
+		if budget, low := openPtyReport(multiplexer); budget != "" {
 			checks = append(checks, map[string]any{"name": "pty", "ok": !low, "detail": budget})
 		}
 		if c.Config.Compatibility.Requires != "" {
